@@ -8,6 +8,7 @@ using json = nlohmann::json;
 
 //predefine
 class DX9RenderHardware;
+class EffectMgr;
 
 struct DepthStencilState {
 	DWORD			ZTestEnable;
@@ -128,24 +129,18 @@ struct DrawParam {
 	}
 };
 
-//file util
-void ReadFileToString(string path,string& out) {
-	std::ifstream t(path);
-	std::stringstream buffer;
-	buffer << t.rdbuf();
-	out = buffer.str();
-}
+
 
 struct EffectMgr {
 	map<string, ID3DXEffect*> EffectMap;
 	IDirect3DDevice9 *              device = NULL;
-	void Init(DX9RenderHardware& rh) {
-		device = rh.device;
+	void Init(IDirect3DDevice9 * d) {
+		device = d;
 	}
 	bool CreateEffect(const void* shaderSrc,UINT length,string name,bool Compiled) {
 		if (EffectMap.find(name) != EffectMap.end()) {
 			if (EffectMap[name])
-			return;
+			return true;
 		}
 
 		ID3DXEffect* effect = NULL;
@@ -153,8 +148,9 @@ struct EffectMgr {
 		HRESULT hr = D3DXCreateEffect(device, shaderSrc, length, NULL, NULL, 0, NULL, &effect, &pShaderErrors);
 		if (hr) {
 			EffectMap[name] = effect;
+			return true;
 		}
-	
+		return false;
 	}
 
 	void Release() {
@@ -176,7 +172,15 @@ struct Camera
 	D3DXMATRIX ProjMatrix;
 };
 
+struct ShaderParam {
+	bool HasShader = false;
+	string effect;
+	string technique;
+	int pass=0;
 
+	map<string, LPDIRTEX> texMap;
+	map<string, float> varMap;
+};
 
 
 
@@ -187,7 +191,7 @@ struct RenderInfo {
 	LPINDBUF IndexBuffer;
 	CombiendRenderState renderState;
 	DrawParam drawParam;
-
+	ShaderParam shaderParam;
 };
 
 struct RenderInfo2 {
@@ -200,88 +204,81 @@ struct RenderInfo2 {
 
 //考虑改成 TransientVertexBuffer 
 //https://www.gamedevs.org/uploads/efficient-buffer-management.pdf
-struct DynamicVertexBuffer {
-	LPVERBUF				m_pVB;
-	LPINDBUF				m_pIB;
-	uint32					m_MaxVBSize;
-	uint32					m_MaxIBSize;
-	vector<BYTE>			m_pSysVB;
-	vector<BYTE>			m_pSysIB;
-	uint32					m_CurVBOffset;
-	uint32					m_CurIBOffset;
-
-#define DYNAMIC_VB_SIZE		0x800000
-#define DYNAMIC_IB_SIZE		0x400000
-	DynamicVertexBuffer() {
-		m_pVB = NULL;
-		m_pIB = NULL;
-		m_MaxVBSize = 0x800000;
-		m_MaxIBSize = 0x400000;
-		m_pSysVB.resize(m_MaxVBSize);
-		m_pSysIB.resize(m_MaxIBSize);
-	}
-	void Create(LPDIRECT3DDEVICE9 device) {
-
-		device->CreateVertexBuffer(m_MaxVBSize,
-			D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC, 0, D3DPOOL_DEFAULT, &m_pVB, NULL);
-
-		device->CreateIndexBuffer(m_MaxIBSize,
-			D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC, D3DFMT_INDEX16, D3DPOOL_DEFAULT, &m_pIB, NULL);
-	}
-	void Reset() {
-		m_CurVBOffset = 0;
-		m_CurIBOffset = 0;
-	}
-	void AllocBuffer(UINT VerNum,UINT IndNum,RenderInfo& info) {
-		info.VertexBuffer = m_pVB;
-		info.IndexBuffer = m_pIB;
-		info.drawParam.FromIndexTriangle(VerNum, IndNum);
-		//info.drawParam
-	}
-	int Upload() {
-		void* Buf;
-		if (FAILED(m_pVB->Lock(0, 0, &Buf, D3DLOCK_DISCARD)))
-		{
-			//FreeAllHWData();
-			//ResetStack();
-			return ERROR;
-		}
-		memcpy(Buf, &m_pSysVB[0], m_CurVBOffset);
-		m_pVB->Unlock();
-
-		if (FAILED(m_pIB->Lock(0, 0, &Buf, D3DLOCK_DISCARD)))
-		{
-			//FreeAllHWData();
-			//ResetStack();
-			return ERROR;
-		}
-		memcpy(Buf, &m_pSysIB[0], m_CurIBOffset);
-		m_pIB->Unlock();
-		return S_OK;
-	}
-
-	void Release() {
-
-	}
-	//DX9RenderHardware* rh = NULL;
-};
-
-class DynamicVBHelper {
-public:
-	static void InitVB() {
-
-	}
-};
-
-
-struct RenderBuffer {
-	LPVERBUF vb;
-	LPINDBUF ib;
-};
-
-//struct simpleBufferMgr {
-	
+//struct DynamicVertexBuffer {
+//	LPVERBUF				m_pVB;
+//	LPINDBUF				m_pIB;
+//	uint32					m_MaxVBSize;
+//	uint32					m_MaxIBSize;
+//	vector<BYTE>			m_pSysVB;
+//	vector<BYTE>			m_pSysIB;
+//	uint32					m_CurVBOffset;
+//	uint32					m_CurIBOffset;
+//
+//#define DYNAMIC_VB_SIZE		0x800000
+//#define DYNAMIC_IB_SIZE		0x400000
+//	DynamicVertexBuffer() {
+//		m_pVB = NULL;
+//		m_pIB = NULL;
+//		m_MaxVBSize = 0x800000;
+//		m_MaxIBSize = 0x400000;
+//		m_pSysVB.resize(m_MaxVBSize);
+//		m_pSysIB.resize(m_MaxIBSize);
+//	}
+//	void Create(LPDIRECT3DDEVICE9 device) {
+//
+//		device->CreateVertexBuffer(m_MaxVBSize,
+//			D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC, 0, D3DPOOL_DEFAULT, &m_pVB, NULL);
+//
+//		device->CreateIndexBuffer(m_MaxIBSize,
+//			D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC, D3DFMT_INDEX16, D3DPOOL_DEFAULT, &m_pIB, NULL);
+//	}
+//	void Reset() {
+//		m_CurVBOffset = 0;
+//		m_CurIBOffset = 0;
+//	}
+//	void AllocBuffer(UINT VerNum,UINT IndNum,RenderInfo& info) {
+//		info.VertexBuffer = m_pVB;
+//		info.IndexBuffer = m_pIB;
+//		info.drawParam.FromIndexTriangle(VerNum, IndNum);
+//		//info.drawParam
+//	}
+//	int Upload() {
+//		void* Buf;
+//		if (FAILED(m_pVB->Lock(0, 0, &Buf, D3DLOCK_DISCARD)))
+//		{
+//			//FreeAllHWData();
+//			//ResetStack();
+//			return ERROR;
+//		}
+//		memcpy(Buf, &m_pSysVB[0], m_CurVBOffset);
+//		m_pVB->Unlock();
+//
+//		if (FAILED(m_pIB->Lock(0, 0, &Buf, D3DLOCK_DISCARD)))
+//		{
+//			//FreeAllHWData();
+//			//ResetStack();
+//			return ERROR;
+//		}
+//		memcpy(Buf, &m_pSysIB[0], m_CurIBOffset);
+//		m_pIB->Unlock();
+//		return S_OK;
+//	}
+//
+//	void Release() {
+//
+//	}
+//	//DX9RenderHardware* rh = NULL;
 //};
+//
+//class DynamicVBHelper {
+//public:
+//	static void InitVB() {
+//
+//	}
+//};
+
+
+
 
 
 struct RenderInfoFixed {
@@ -297,22 +294,39 @@ struct RenderConfig {
 	
 };
 
-class RenderSystem {
-
-
+struct RenderBuffer {
+	LPVERBUF vb;
+	LPINDBUF ib;
 };
-class BufferPool {
-	void createVertexBuffer() {
+class BufferMgr {
+public:
+	map<void*, RenderBuffer> PieceTobuffers;
+	IDirect3DDevice9* device;
+	RenderBuffer* GetBuffer(void* piece) {
+		if (PieceTobuffers.find(piece) != PieceTobuffers.end()) {
+			return &PieceTobuffers[piece];
+		}
+		else
+			return NULL;
+	}
 
+	RenderBuffer* CreateRenderBuffer(void* piece,UINT VerBufSize, UINT IndBufSize, DWORD Format) {
+		printf("alloc buffer");
+		RenderBuffer rb;
+		device->CreateVertexBuffer(VerBufSize, D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, Format, D3DPOOL_DEFAULT, &rb.vb, NULL);
+
+		device->CreateIndexBuffer(IndBufSize, D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, D3DFMT_INDEX16, D3DPOOL_DEFAULT, &rb.ib, NULL);
+		PieceTobuffers[piece] = rb;
+		return &PieceTobuffers[piece];
 	}
 };
-
-
 
 class DX9RenderHardware {
 public:
 	IDirect3D9 *           d3d = NULL;              //D3D接口
 	IDirect3DDevice9 *              device = NULL;            //D3D设备
+	
+
 
 	void SetVertexBuffer();
 	void SetIndexBuffer();
@@ -370,10 +384,6 @@ public:
 
 	void Render(RenderInfo& info);
 
-	void UseEffect() {
-
-	}
-
 	void SetTextures(TextureList& list) {
 		for(int i=0;i<8;i++)
 			if (list.Textures[i] != NULL) {
@@ -392,14 +402,37 @@ public:
 		SetCommonState(state.rs);
 		rh->SetFixedState(state.fixdRs);
 	}
+
+	void ApplyEffect(ID3DXEffect* effect,string tech, UINT pass) {
+		effect->SetTechnique(tech.c_str());
+		UINT passNum;
+		effect->Begin(&passNum,0);
+		effect->BeginPass(pass);
+		effect->EndPass();
+		effect->End();
+
+	}
+
+	bool Inited = false;
+	EffectMgr effectMgr;
 	DX9RenderHardware* rh=NULL;
+	
 };
+
+//file util
+
 
 
 class App {
 public:
-	string WorkDirectory;
-
+	string WorkDirectory="F:/artist/data/";
+	void ReadFileToString(string path, string& out)
+	{
+		std::ifstream t(path);
+		std::stringstream buffer;
+		buffer << t.rdbuf();
+		out = buffer.str();
+	}
 };
 //void CreateDynamicVertexBuffer(UINT size, LPVERBUF buffer) {
 
@@ -420,6 +453,7 @@ public:
 extern miniDX9Render g_miniRender;
 extern DX9RenderHardware g_rh;
 extern map<void*, RenderBuffer> g_buffers;
+extern BufferMgr bufferMgr;
 void ReadConfig();
 
 //ModelToRender helper Func

@@ -7,6 +7,7 @@ using namespace std;
 miniDX9Render g_miniRender;
 DX9RenderHardware g_rh;
 map<void*, RenderBuffer> g_buffers;
+BufferMgr bufferMgr;
 //json test
 void ReadConfig()
 {
@@ -44,9 +45,20 @@ void ReadConfig()
 //output:info
 void EditModelToRenderInfo(CEditModel* model, RenderInfo2& infoList)
 {
+	//const D3DXMATRIX *pMat = NULL;
+	//auto& m_pPhysObj = model->m_pPhysObj;
+	//if (m_pPhysObj&&m_pPhysObj->GetType() == PHYSICS_OBJ_TYPE::POT_EXPLOSE)
+	//{
+	//	pMat = m_pPhysObj->CalculateMatrix();
+	//}
+	//int id = 0;
+
+	auto& m_RenderMatrix = model->m_RenderMatrix;
+
+
 	for (auto renderPiece : model->GetMeshsPiece())
 	{
-		D3DXMATRIX orgMat = model->m_RenderMatrix.m_MatrixUnit[0].m_GlobeSkeletalMatrix;
+		//D3DXMATRIX orgMat = model->m_RenderMatrix.m_MatrixUnit[0].m_GlobeSkeletalMatrix;
 
 		//if (m_pPhysObj && m_pPhysObj->GetType() == PHYSICS_OBJ_TYPE::POT_EXPLOSE && pMat)
 		//{
@@ -63,7 +75,7 @@ void EditModelToRenderInfo(CEditModel* model, RenderInfo2& infoList)
 		auto piece = renderPiece.second.m_Piece;
 		RenderInfo info;
 		//m_Piece->Render(Dist, this, ModelMatrix, CalCloth, shader_type);
-		PieceToRenderInfo(piece, info, model->m_RenderMatrix, false,&renderPiece.second);
+		PieceToRenderInfo(piece, info, m_RenderMatrix, true,&renderPiece.second);
 		infoList.objInfoList.push_back(std::move(info));
 	}
 }
@@ -140,7 +152,65 @@ void StaticRSToRenderState(const STATIC_RS& rs, CombiendRenderState& state) {
 
 
 }
+//out:ShaderParam
+void RSToShaderParam(const vector<CTexture*>& TextureList, const STATIC_RS &RS, ShaderParam& param) {
+	if (RS.m_Shader == "") {
+		param.HasShader = false;
+		return;
+	}
+	map<string, LPDIRTEX> texMap;
+	map<string, float> varMap;
+	CIniFile iniFile;
+	iniFile.OpenBuffer((char*)RS.m_Shader.c_str());
 
+	string technique;
+	char value[64];
+	iniFile.GetString("Shader", "Technique", "default", value, 64);
+	DWORD pass = iniFile.GetInteger("Shader", "Pass", 0);
+
+	technique = value;
+	char key[64];
+	uint idx = 0;
+	bool bContinue = true;
+	while (bContinue)
+	{
+		bContinue = iniFile.GetKeyValue("Texture", key, value, 64, idx);
+		if (bContinue)
+		{
+			int TexIdx = atoi(value);
+			CTexture *pTex = TexIdx < (uint)TextureList.size() ? TextureList[TexIdx] : NULL;
+			if (pTex)
+			{
+				string name = key;
+				texMap[name] = (IDirect3DTexture9*)pTex->GetD3DTexture();
+			}
+		}
+		idx++;
+	}
+
+	idx = 0;
+	bContinue = true;
+	while (bContinue)
+	{
+		bContinue = iniFile.GetKeyValue("Variable", key, value, 64, idx);
+		if (bContinue)
+		{
+			string name = key;
+			varMap[name] = atof(value);
+		}
+		idx++;
+	}
+
+	iniFile.Close();
+	param.technique = technique;
+	param.pass = pass;
+	param.varMap = varMap;
+	param.texMap = texMap;
+
+
+	//SetShaderParam(&texMap, &varMap, RS.m_Material.Specular, RS.m_Material.Power, ms_RenderStyle.m_SpecularEnable);
+	
+}
 //output: info
 void PieceToRenderInfo(CPiece* piece, RenderInfo& info, CRenderMatrix& ModelMatrix,bool CalCloth, CRenderPiece* pRP)
 {
@@ -153,9 +223,9 @@ void PieceToRenderInfo(CPiece* piece, RenderInfo& info, CRenderMatrix& ModelMatr
 	LPINDBUF IB = NULL;
 
 	//初始化BUF大小
-	static UINT VerBufSize = 1165536;
+	static UINT VerBufSize = 165536;
 	static char* RenderBuf = new char[VerBufSize];
-	static UINT IndBufSize = 1165536;
+	static UINT IndBufSize = 165536;
 	 
 
 	int Level = 0;
@@ -186,22 +256,28 @@ void PieceToRenderInfo(CPiece* piece, RenderInfo& info, CRenderMatrix& ModelMatr
 		SAFE_RELEASE(IB);
 	}
 	
-	if (g_buffers.find(piece) != g_buffers.end()) {
-		VB = g_buffers[piece].vb;
-		IB = g_buffers[piece].ib;
-	}
-	else {
-		printf("alloc buffer");
-		RenderBuffer rb;
-		if (m_pD3dDev && !VB)
-			m_pD3dDev->CreateVertexBuffer(VerBufSize, D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, Format, D3DPOOL_DEFAULT, &VB, NULL);
+	RenderBuffer* rb = bufferMgr.GetBuffer(piece);
+	if (!rb)
+		rb = bufferMgr.CreateRenderBuffer(piece, VerBufSize, IndBufSize, Format);
 
-		if (m_pD3dDev && !IB)
-			m_pD3dDev->CreateIndexBuffer(IndBufSize, D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, D3DFMT_INDEX16, D3DPOOL_DEFAULT, &IB, NULL);
-		rb.ib = IB;
-		rb.vb = VB;
-		g_buffers[piece] = rb;
-	}
+	VB = rb->vb;
+	IB = rb->ib;
+	//if (g_buffers.find(piece) != g_buffers.end()) {
+	//	VB = g_buffers[piece].vb;
+	//	IB = g_buffers[piece].ib;
+	//}
+	//else {
+	//	printf("alloc buffer");
+	//	RenderBuffer rb;
+	//	if (m_pD3dDev && !VB)
+	//		m_pD3dDev->CreateVertexBuffer(VerBufSize, D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, Format, D3DPOOL_DEFAULT, &VB, NULL);
+
+	//	if (m_pD3dDev && !IB)
+	//		m_pD3dDev->CreateIndexBuffer(IndBufSize, D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY, D3DFMT_INDEX16, D3DPOOL_DEFAULT, &IB, NULL);
+	//	rb.ib = IB;
+	//	rb.vb = VB;
+	//	g_buffers[piece] = rb;
+	//}
 
 
 	D3DXMATRIX& matWorld = ModelMatrix.m_MatrixUnit[0].m_CurSkeletalMatrix;
@@ -229,6 +305,8 @@ void PieceToRenderInfo(CPiece* piece, RenderInfo& info, CRenderMatrix& ModelMatr
 		auto rs_time = pieceRS->GetShade();
 		rs_time.GetCurRenderStyle(rs, pieceRS->m_Texture, ModelMatrix.m_CurFrame*33.33f, NULL);
 		StaticRSToRenderState(rs, info.renderState);
+
+		RSToShaderParam(pieceRS->m_Texture,rs,info.shaderParam);
 	}
 
 	info.VertexBuffer = VB;
@@ -244,12 +322,14 @@ void miniDX9Render::Init(LPDIRECT3DDEVICE9 pDevice)
 {
 	//m_pD3d = NULL;
 	//m_pDevice = pDevice;
+	if (Inited) return;
 	rh = &g_rh;
 	rh->device = pDevice;
-	box.Init(rh->device);
+	bufferMgr.device = pDevice;
+	Inited = true;
+	//box.Init(rh->device);
 }
 
-//end
 
 void miniDX9Render::Render(RenderInfo2& info)
 {
@@ -283,6 +363,15 @@ void miniDX9Render::Render(RenderInfo& info)
 	pDevice->SetIndices(info.IndexBuffer);
 
 	SetCombinedState(info.renderState);
+
+	if (info.shaderParam.HasShader) {
+
+	}
+	else {
+		pDevice->SetVertexShader(NULL);
+		pDevice->SetPixelShader(NULL);
+	}
+
 	auto dp = &info.drawParam;
 	pDevice->DrawIndexedPrimitive(dp->PrimeType, dp->VertexBase, dp->MinVertexIndex, dp->NumVertices, dp->startIndex, dp->primCount);
 }
