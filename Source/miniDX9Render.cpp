@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "miniDX9Render.h"
 #include <iostream>
+#include "D3dd.h"
 using namespace std;
 
 
@@ -8,6 +9,16 @@ miniDX9Render g_miniRender;
 DX9RenderHardware g_rh;
 map<void*, RenderBuffer> g_buffers;
 BufferMgr bufferMgr;
+App g_app;
+
+void ReadFileToString(string path, string& out)
+{
+	std::ifstream t(path);
+	std::stringstream buffer;
+	buffer << t.rdbuf();
+	out = buffer.str();
+}
+
 //json test
 void ReadConfig()
 {
@@ -152,12 +163,95 @@ void StaticRSToRenderState(const STATIC_RS& rs, CombiendRenderState& state) {
 
 
 }
+
+VOID ConvertLightToViewSpace(D3DVECTOR &dir, D3DXMATRIXA16 *pMatView)
+{
+	D3DXVECTOR3 lightDir(dir.x, dir.y, dir.z);
+	D3DXVec3TransformNormal(&lightDir, &lightDir, pMatView);
+	D3DXVec3Normalize(&lightDir, &lightDir);
+	dir.x = -lightDir.x;
+	dir.y = -lightDir.y;
+	dir.z = -lightDir.z;
+}
+extern CD3d g_D3d;
+void SetGlobalSkinShaderParam(IDirect3DDevice9* m_pDevice, ID3DXEffect* m_pSkinEffect) {
+
+	D3DXMATRIX World, View, Proj;
+	D3DXMatrixIdentity(&World);
+	m_pDevice->GetTransform(D3DTS_VIEW, &View);
+	m_pDevice->GetTransform(D3DTS_PROJECTION, &Proj);
+	int boneCount = 4;
+
+	D3DXMATRIXA16 combinedMat;
+	D3DXCOLOR globalAmbient(0xffffffff);
+	D3DXCOLOR AmbientColor(g_D3d.GetAmbientColor());
+	D3DXCOLOR DiffuseColor(g_D3d.GetSunLightColor());
+	D3DXVECTOR3 lightDir = g_D3d.GetSunLightDir();
+
+	m_pSkinEffect->SetMatrix("matWorld", &World);
+	m_pSkinEffect->SetMatrix("matView", &View);
+
+	D3DXMatrixMultiply(&combinedMat, &World, &View);
+	m_pSkinEffect->SetMatrix("matWorldView", &combinedMat);
+
+	ConvertLightToViewSpace(lightDir, &combinedMat);
+
+	D3DXMatrixMultiply(&combinedMat, &combinedMat, &Proj);
+	m_pSkinEffect->SetMatrix("mGlobalWorldViewProjMatrix", &combinedMat);
+
+	m_pSkinEffect->SetInt("CurNumBones", boneCount);
+
+	D3DXVECTOR4 white = D3DXVECTOR4(1, 1, 1, 1);
+	D3DXVECTOR4 black = D3DXVECTOR4(0, 0, 0, 0);
+
+
+	m_pSkinEffect->SetVector("globalAmbient", (D3DXVECTOR4*)&AmbientColor);
+
+	m_pSkinEffect->SetVector("vMaterialAmbiColor", (D3DXVECTOR4*)&white);
+	m_pSkinEffect->SetVector("vMaterialDiffColor", (D3DXVECTOR4*)&white);
+	m_pSkinEffect->SetVector("vMaterialEmisColor", (D3DXVECTOR4*)&black);
+
+	int type = D3DLIGHT_DIRECTIONAL;
+	m_pSkinEffect->SetValue("lights[0].iType", (void *)&type, sizeof(int));
+
+	// 将光线方向换算到view space优化shader程序
+
+	m_pSkinEffect->SetValue("lights[0].vDir", (void*)&lightDir.x, sizeof(D3DVECTOR));
+
+	m_pSkinEffect->SetValue("lights[0].vAmbient", (void*)&black, sizeof(D3DCOLORVALUE));
+
+	// 合并light diffuse 和 material diffuse 优化shader 程序			
+	m_pSkinEffect->SetValue("lights[0].vDiffuse", (void*)&DiffuseColor, sizeof(D3DCOLORVALUE));
+
+	m_pSkinEffect->SetValue("lights[0].vSpecular", (void*)&DiffuseColor, sizeof(D3DCOLORVALUE));
+	//m_pSkinEffect->SetBool(m_hSpecular, TRUE);
+
+
+	// 7. 设置贴图坐标偏移矩阵
+	m_pSkinEffect->SetInt("nTexUVTransStage", 0);
+
+	D3DXMATRIX mat;
+	D3DXMatrixIdentity(&mat);
+	m_pSkinEffect->SetMatrix("matUVTransform", &mat);
+
+	//m_pSkinEffect->SetTechnique(m_hCurHLSL);
+	//m_pDevice->SetVertexDeclaration(m_pDecl);
+
+
+	DWORD TFactor;
+	m_pDevice->GetRenderState(D3DRS_TEXTUREFACTOR, &TFactor);
+	D3DXVECTOR4 vecTFactor(float((TFactor & 0xFF0000) >> 16) / 255.0f, float((TFactor & 0xFF00) >> 8) / 255.0f, float(TFactor & 0xFF) / 255.0f, float((TFactor & 0xFF000000) >> 24) / 255.0f);
+	m_pSkinEffect->SetVector("TFactor", &vecTFactor);
+}
+
 //out:ShaderParam
-void RSToShaderParam(const vector<CTexture*>& TextureList, const STATIC_RS &RS, ShaderParam& param) {
+void RSToShaderParam(const vector<CTexture*>& TextureList, const STATIC_RS &RS, ShaderState& param) {
 	if (RS.m_Shader == "") {
 		param.HasShader = false;
 		return;
 	}
+	param.HasShader = true;
+	param.effect = "skinAnimation2";
 	map<string, LPDIRTEX> texMap;
 	map<string, float> varMap;
 	CIniFile iniFile;
@@ -200,13 +294,14 @@ void RSToShaderParam(const vector<CTexture*>& TextureList, const STATIC_RS &RS, 
 		}
 		idx++;
 	}
+	varMap["fMaterialPower"] = RS.m_Material.Power;
+	param.colorMap["vMaterialSpecColor"] = RS.m_Material.Specular;
 
 	iniFile.Close();
 	param.technique = technique;
 	param.pass = pass;
 	param.varMap = varMap;
 	param.texMap = texMap;
-
 
 	//SetShaderParam(&texMap, &varMap, RS.m_Material.Specular, RS.m_Material.Power, ms_RenderStyle.m_SpecularEnable);
 	
@@ -306,7 +401,7 @@ void PieceToRenderInfo(CPiece* piece, RenderInfo& info, CRenderMatrix& ModelMatr
 		rs_time.GetCurRenderStyle(rs, pieceRS->m_Texture, ModelMatrix.m_CurFrame*33.33f, NULL);
 		StaticRSToRenderState(rs, info.renderState);
 
-		RSToShaderParam(pieceRS->m_Texture,rs,info.shaderParam);
+		RSToShaderParam(pieceRS->m_Texture,rs,info.shaderState);
 	}
 
 	info.VertexBuffer = VB;
@@ -326,25 +421,20 @@ void miniDX9Render::Init(LPDIRECT3DDEVICE9 pDevice)
 	rh = &g_rh;
 	rh->device = pDevice;
 	bufferMgr.device = pDevice;
+	effectMgr.Init(pDevice);
 	Inited = true;
 	//box.Init(rh->device);
 }
 
 
-void miniDX9Render::Render(RenderInfo2& info)
+void miniDX9Render::RenderFixed(RenderInfo2& info)
 {
-	//filter alpha object
 	vector<RenderInfo*> opaqueDrawIndexs;
 	vector<RenderInfo*> alphaDrawIndexs;
-	for (int i = 0; i < info.objInfoList.size(); i++) {
-		if (info.objInfoList[i].renderState.rs.blendState.AlphaBlendEnable) {
-			alphaDrawIndexs.push_back(&info.objInfoList[i]);
-		}
-		else {
-			opaqueDrawIndexs.push_back(&info.objInfoList[i]);
-		}
+	FilterAlphaObject(info, opaqueDrawIndexs, alphaDrawIndexs);
+	for (auto& x : info.objInfoList) {
+		x.shaderState.HasShader = false;
 	}
-
 	for (auto obj : opaqueDrawIndexs) {
 		Render(*obj);
 	}
@@ -364,14 +454,75 @@ void miniDX9Render::Render(RenderInfo& info)
 
 	SetCombinedState(info.renderState);
 
-	if (info.shaderParam.HasShader) {
+	ID3DXEffect* effect = NULL;
+	SetShaderStateToEffect(info.shaderState,effect);
 
-	}
-	else {
-		pDevice->SetVertexShader(NULL);
-		pDevice->SetPixelShader(NULL);
-	}
+	if (effect)
+		effect->SetTechnique(info.shaderState.technique.c_str());
+	UINT numPass;
+	effect->Begin(&numPass,0);
+	effect->BeginPass(info.shaderState.pass);
 
 	auto dp = &info.drawParam;
 	pDevice->DrawIndexedPrimitive(dp->PrimeType, dp->VertexBase, dp->MinVertexIndex, dp->NumVertices, dp->startIndex, dp->primCount);
+	effect->EndPass();
+	effect->End();
+}
+
+void miniDX9Render::SetShaderStateToEffect(ShaderState& ss,ID3DXEffect*& o_effect)
+{
+	auto device = rh->device;
+	if (ss.HasShader) {
+		auto effect = effectMgr.GetEffect(ss.effect);
+		bool check = effect != NULL&&ss.technique != "";
+		if (check) {
+			SetGlobalSkinShaderParam(rh->device, effect);
+
+			for (auto& x : ss.varMap) {
+				effect->SetFloat(x.first.c_str(), x.second);
+			}
+			for (auto& x : ss.colorMap) {
+				effect->SetVector(x.first.c_str(), (D3DXVECTOR4*)&x.second);
+			}
+
+			for (auto& x : ss.texMap) {
+				effect->SetTexture(x.first.c_str(), x.second);
+			}
+			o_effect = effect;
+			return;
+		}	
+	}
+
+	//no shader
+	{
+		device->SetVertexShader(NULL);
+		device->SetPixelShader(NULL);
+	}
+}
+
+void miniDX9Render::RenderPixel(RenderInfo2& info)
+{
+	vector<RenderInfo*> opaqueDrawIndexs;
+	vector<RenderInfo*> alphaDrawIndexs;
+	FilterAlphaObject(info, opaqueDrawIndexs, alphaDrawIndexs);
+
+	for (auto obj : opaqueDrawIndexs) {
+		Render(*obj);
+	}
+
+	for (auto obj : alphaDrawIndexs) {
+		Render(*obj);
+	}
+}
+
+void miniDX9Render::FilterAlphaObject(RenderInfo2& info, vector<RenderInfo*>& opaqueDrawIndexs, vector<RenderInfo*>& alphaDrawIndexs)
+{
+	for (int i = 0; i < info.objInfoList.size(); i++) {
+		if (info.objInfoList[i].renderState.rs.blendState.AlphaBlendEnable) {
+			alphaDrawIndexs.push_back(&info.objInfoList[i]);
+		}
+		else {
+			opaqueDrawIndexs.push_back(&info.objInfoList[i]);
+		}
+	}
 }

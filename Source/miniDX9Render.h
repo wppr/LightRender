@@ -2,13 +2,16 @@
 #include "d3d9.h"
 #include "d3dx9.h"
 #include "d3dx9effect.h"
-
+#include <iostream>
 #include "nlohmann/json.hpp"
+using namespace std;
 using json = nlohmann::json;
 
 //predefine
 class DX9RenderHardware;
 class EffectMgr;
+//#define SAFE_RELEASE(p) 	{ if ( p ) { (p)->Release(); (p) = NULL;	} } 
+
 
 struct DepthStencilState {
 	DWORD			ZTestEnable;
@@ -129,15 +132,29 @@ struct DrawParam {
 	}
 };
 
-
+void ReadFileToString(string path, string& out);
 
 struct EffectMgr {
 	map<string, ID3DXEffect*> EffectMap;
 	IDirect3DDevice9 *              device = NULL;
 	void Init(IDirect3DDevice9 * d) {
 		device = d;
+
+
+		std::ifstream file("shader/skin_animation2.fxo", std::ios::binary | std::ios::ate);
+		if (file) {
+			std::streamsize size = file.tellg();
+			file.seekg(0, std::ios::beg);
+
+			std::vector<char> buffer(size);
+			if (file.read(buffer.data(), size))
+			{
+				bool r = CreateEffect(&buffer[0], buffer.size(), "skinAnimation2");
+				cout << "create effect skinAnimation2 " << r << endl;
+			}
+		}
 	}
-	bool CreateEffect(const void* shaderSrc,UINT length,string name,bool Compiled) {
+	bool CreateEffect(const void* shaderSrc,UINT length,string name) {
 		if (EffectMap.find(name) != EffectMap.end()) {
 			if (EffectMap[name])
 			return true;
@@ -146,13 +163,18 @@ struct EffectMgr {
 		ID3DXEffect* effect = NULL;
 		LPD3DXBUFFER pShaderErrors = NULL;
 		HRESULT hr = D3DXCreateEffect(device, shaderSrc, length, NULL, NULL, 0, NULL, &effect, &pShaderErrors);
-		if (hr) {
+		if (hr==S_OK) {
 			EffectMap[name] = effect;
 			return true;
 		}
 		return false;
 	}
-
+	ID3DXEffect* GetEffect(string name) {
+		if (EffectMap.find(name) != EffectMap.end()) {
+			return EffectMap[name];
+		}
+		return NULL;
+	}
 	void Release() {
 
 	}
@@ -172,7 +194,13 @@ struct Camera
 	D3DXMATRIX ProjMatrix;
 };
 
-struct ShaderParam {
+
+struct ShaderValue {
+	array<float,16> value;
+	int size=0;
+};
+
+struct ShaderState {
 	bool HasShader = false;
 	string effect;
 	string technique;
@@ -180,6 +208,48 @@ struct ShaderParam {
 
 	map<string, LPDIRTEX> texMap;
 	map<string, float> varMap;
+	map<string, D3DCOLORVALUE> colorMap;
+};
+
+struct RenderTarget
+{
+	uint				m_Width;
+	uint				m_Height;
+	D3DFORMAT			m_Format;
+	LPDIRECT3DTEXTURE9  m_pTexture=NULL;
+	LPDIRECT3DSURFACE9	m_pSurface=NULL;
+
+};
+
+struct RenderTargetMgr
+{
+	IDirect3DDevice9* device = NULL;
+	void Init(IDirect3DDevice9* pdevice) {
+		device = pdevice;
+	}
+
+	RenderTarget* Create(string name, uint width, uint height, D3DFORMAT format) {
+		RenderTarget rt;
+
+		rt.m_Width = width;
+		rt.m_Height = height;
+		rt.m_Format = format;
+
+		HRESULT hr = D3DXCreateTexture(device, width, height, 1, D3DUSAGE_RENDERTARGET, format, D3DPOOL_DEFAULT, &rt.m_pTexture);
+		if (SUCCEEDED(hr))
+		{
+			hr = rt.m_pTexture->GetSurfaceLevel(0, &rt.m_pSurface);
+			RenderTargetMap[name] = rt;
+		}
+	}
+
+	void Release(RenderTarget* rt) {
+		SAFE_RELEASE(rt->m_pSurface);
+		SAFE_RELEASE(rt->m_pTexture);
+
+	}
+
+	map<string, RenderTarget> RenderTargetMap;
 };
 
 
@@ -191,7 +261,7 @@ struct RenderInfo {
 	LPINDBUF IndexBuffer;
 	CombiendRenderState renderState;
 	DrawParam drawParam;
-	ShaderParam shaderParam;
+	ShaderState shaderState;
 };
 
 struct RenderInfo2 {
@@ -380,7 +450,11 @@ public:
 
 	void Init(LPDIRECT3DDEVICE9 pDevice);
 
-	void Render(RenderInfo2& info);
+	void RenderFixed(RenderInfo2& info);
+
+	void RenderPixel(RenderInfo2& info);
+
+	void FilterAlphaObject(RenderInfo2& info, vector<RenderInfo*>& opaqueDrawIndexs, vector<RenderInfo*>& alphaDrawIndexs);
 
 	void Render(RenderInfo& info);
 
@@ -403,20 +477,27 @@ public:
 		rh->SetFixedState(state.fixdRs);
 	}
 
-	void ApplyEffect(ID3DXEffect* effect,string tech, UINT pass) {
-		effect->SetTechnique(tech.c_str());
-		UINT passNum;
-		effect->Begin(&passNum,0);
-		effect->BeginPass(pass);
-		effect->EndPass();
-		effect->End();
+	void SetShaderStateToEffect(ShaderState& ss, ID3DXEffect*& o_effect);
 
-	}
+	//void BeginEffect(ID3DXEffect* effect,string tech, UINT pass) {
+	//	effect->SetTechnique(tech.c_str());
+	//	UINT passNum;
+	//	effect->Begin(&passNum,0);
+	//	if (pass < passNum) {
+	//		effect->BeginPass(pass);
+	//		effect->EndPass();
+	//	}
+	//	else {
+	//		printf("error pass num");
+	//	}
+	//	//effect->End();
+
+	//}
 
 	bool Inited = false;
 	EffectMgr effectMgr;
 	DX9RenderHardware* rh=NULL;
-	
+	RenderTarget rtMgr;
 };
 
 //file util
@@ -426,21 +507,8 @@ public:
 class App {
 public:
 	string WorkDirectory="F:/artist/data/";
-	void ReadFileToString(string path, string& out)
-	{
-		std::ifstream t(path);
-		std::stringstream buffer;
-		buffer << t.rdbuf();
-		out = buffer.str();
-	}
+
 };
-//void CreateDynamicVertexBuffer(UINT size, LPVERBUF buffer) {
-
-//	rh->m_pDevice->CreateVertexBuffer(size,
-//		D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC, 0, D3DPOOL_DEFAULT, &buffer, NULL);
-//}
-//map<string, LPVERBUF> g_VBs;
-//map<string, LPINDBUF> g_IBs;
 
 
 
@@ -450,14 +518,17 @@ public:
 
 
 
-extern miniDX9Render g_miniRender;
-extern DX9RenderHardware g_rh;
-extern map<void*, RenderBuffer> g_buffers;
-extern BufferMgr bufferMgr;
+
 void ReadConfig();
 
 //ModelToRender helper Func
 #include "EditModel.h"
+extern miniDX9Render g_miniRender;
+extern DX9RenderHardware g_rh;
+extern map<void*, RenderBuffer> g_buffers;
+extern BufferMgr bufferMgr;
+extern App g_app;
+void SetGlobalSkinShaderParam(IDirect3DDevice9* m_pDevice, ID3DXEffect* m_pSkinEffect);
 
 void EditModelToRenderInfo(CEditModel* model, RenderInfo2& infoList);
 
