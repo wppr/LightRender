@@ -140,8 +140,13 @@ struct EffectMgr {
 	void Init(IDirect3DDevice9 * d) {
 		device = d;
 
+		CreateEffectFromFile("shader/skin_animation2.fxo", "skinAnimation2");
+		CreateEffectFromFile("shader/fxaa.shader", "fxaa");
 
-		std::ifstream file("shader/skin_animation2.fxo", std::ios::binary | std::ios::ate);
+	}
+
+	void CreateEffectFromFile(string path,string name) {
+		std::ifstream file(path, std::ios::binary | std::ios::ate);
 		if (file) {
 			std::streamsize size = file.tellg();
 			file.seekg(0, std::ios::beg);
@@ -149,12 +154,13 @@ struct EffectMgr {
 			std::vector<char> buffer(size);
 			if (file.read(buffer.data(), size))
 			{
-				bool r = CreateEffect(&buffer[0], buffer.size(), "skinAnimation2");
-				cout << "create effect skinAnimation2 " << r << endl;
+				bool r = CreateEffectFromSrc(&buffer[0], buffer.size(), name);
+				cout << "create effect "+path+":"<< name<< r << endl;
 			}
 		}
 	}
-	bool CreateEffect(const void* shaderSrc,UINT length,string name) {
+
+	bool CreateEffectFromSrc(const void* shaderSrc,UINT length,string name) {
 		if (EffectMap.find(name) != EffectMap.end()) {
 			if (EffectMap[name])
 			return true;
@@ -221,26 +227,66 @@ struct RenderTarget
 
 };
 
+class FXAAEffect {
+	void Init() {
+
+	}
+	void Render() {
+
+	}
+};
+
 struct RenderTargetMgr
 {
 	IDirect3DDevice9* device = NULL;
 	void Init(IDirect3DDevice9* pdevice) {
 		device = pdevice;
+		uint w = 800, h = 600;
+		CreateRT("showTex", w, h, D3DFMT_A8R8G8B8);
+		CreateDepthRT("showTexDepth", w, h, D3DFMT_D24S8);
+		CreateRT("fxaaRT", w, h, D3DFMT_A8R8G8B8);
+		
+
+		//gbuffer
+		CreateRT("g_diffuse", w, h, D3DFMT_A8R8G8B8);
+		CreateRT("g_normal", w, h, D3DFMT_A8R8G8B8);
+		CreateRT("g_customInfo", w, h, D3DFMT_A8R8G8B8);
+		CreateRT("g_depth", w, h, D3DFMT_R32F);
+
+
+		
 	}
 
-	RenderTarget* Create(string name, uint width, uint height, D3DFORMAT format) {
+	RenderTarget* CreateRT(string name, uint width, uint height, D3DFORMAT format) {
+		return CreateRTImp(name, width, height, format, D3DUSAGE_RENDERTARGET);
+	}
+	RenderTarget* CreateDepthRT(string name, uint width, uint height, D3DFORMAT format) {
+		return CreateRTImp(name, width, height, format, D3DUSAGE_DEPTHSTENCIL);
+	}
+	RenderTarget* CreateRTImp(string name, uint width, uint height, D3DFORMAT format,DWORD Usage) {
 		RenderTarget rt;
 
 		rt.m_Width = width;
 		rt.m_Height = height;
 		rt.m_Format = format;
-
-		HRESULT hr = D3DXCreateTexture(device, width, height, 1, D3DUSAGE_RENDERTARGET, format, D3DPOOL_DEFAULT, &rt.m_pTexture);
+		
+		HRESULT hr = D3DXCreateTexture(device, width, height, 1, Usage, format, D3DPOOL_DEFAULT, &rt.m_pTexture);
 		if (SUCCEEDED(hr))
 		{
 			hr = rt.m_pTexture->GetSurfaceLevel(0, &rt.m_pSurface);
 			RenderTargetMap[name] = rt;
+			return &RenderTargetMap[name];
 		}
+		return NULL;
+	}
+
+	
+
+	RenderTarget* GetRT(string name) {
+		if (RenderTargetMap.find(name) != RenderTargetMap.end())
+			return &RenderTargetMap[name];
+		else
+			return NULL;
 	}
 
 	void Release(RenderTarget* rt) {
@@ -252,7 +298,9 @@ struct RenderTargetMgr
 	map<string, RenderTarget> RenderTargetMap;
 };
 
+struct RenderTargetState {
 
+};
 
 struct RenderInfo {
 	D3DXMATRIX WorldMatrix;
@@ -270,6 +318,7 @@ struct RenderInfo2 {
 	vector<RenderInfo> objInfoList;
 	
 };
+
 
 
 //¿¼ÂÇ¸Ä³É TransientVertexBuffer 
@@ -443,6 +492,22 @@ public:
 	}
 };
 
+class Pipeline {
+public:
+	virtual void Init(){}
+	virtual void Render(){}
+};
+
+struct GlobalValue {
+	float ScreenBuffer[24];
+
+	void Init() {
+		ScreenBuffer[0] = -1.0f ; ScreenBuffer[1] = -1.0f ; ScreenBuffer[2] = 0.0f; ScreenBuffer[3] = 1.0f; ScreenBuffer[4] = 0.0f; ScreenBuffer[5] = 1.0f;
+		ScreenBuffer[6] = -1.0f ; ScreenBuffer[7] = 1.0f ; ScreenBuffer[8] = 0.0f; ScreenBuffer[9] = 1.0f; ScreenBuffer[10] = 0.0f; ScreenBuffer[11] = 0.0f;
+		ScreenBuffer[12] = 1.0f ; ScreenBuffer[13] = -1.0f ; ScreenBuffer[14] = 0.0f; ScreenBuffer[15] = 1.0f; ScreenBuffer[16] = 1.0f; ScreenBuffer[17] = 1.0f;
+		ScreenBuffer[18] = 1.0f ; ScreenBuffer[19] = 1.0f ; ScreenBuffer[20] = 0.0f; ScreenBuffer[21] = 1.0f; ScreenBuffer[22] = 1.0f; ScreenBuffer[23] = 0.0f;
+	}
+};
 
 
 class miniDX9Render {
@@ -454,6 +519,8 @@ public:
 
 	void RenderPixel(RenderInfo2& info);
 
+	void RenderDeferred(RenderInfo2& info);
+
 	void FilterAlphaObject(RenderInfo2& info, vector<RenderInfo*>& opaqueDrawIndexs, vector<RenderInfo*>& alphaDrawIndexs);
 
 	void Render(RenderInfo& info);
@@ -464,7 +531,11 @@ public:
 				rh->SetTexture(i, list.Textures[i]);
 			}
 	}
-
+	void SetRenderTarget(UINT index, RenderTarget* rt) {
+		//if (rt->m_pSurface) {
+		rh->device->SetRenderTarget(index, rt->m_pSurface);
+		//}
+	}
 	void SetCommonState(RenderState& state) {
 		rh->SetBlendState(state.blendState);
 		rh->SetDepthStencilState(state.depthStencilState);
@@ -479,25 +550,14 @@ public:
 
 	void SetShaderStateToEffect(ShaderState& ss, ID3DXEffect*& o_effect);
 
-	//void BeginEffect(ID3DXEffect* effect,string tech, UINT pass) {
-	//	effect->SetTechnique(tech.c_str());
-	//	UINT passNum;
-	//	effect->Begin(&passNum,0);
-	//	if (pass < passNum) {
-	//		effect->BeginPass(pass);
-	//		effect->EndPass();
-	//	}
-	//	else {
-	//		printf("error pass num");
-	//	}
-	//	//effect->End();
-
-	//}
+	void OnResize(UINT w,UINT h){}
+	void OnDeviceLost(){}
+	void OnDeviceReset(){}
 
 	bool Inited = false;
 	EffectMgr effectMgr;
 	DX9RenderHardware* rh=NULL;
-	RenderTarget rtMgr;
+	RenderTargetMgr rtMgr;
 };
 
 //file util

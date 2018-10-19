@@ -422,6 +422,7 @@ void miniDX9Render::Init(LPDIRECT3DDEVICE9 pDevice)
 	rh->device = pDevice;
 	bufferMgr.device = pDevice;
 	effectMgr.Init(pDevice);
+	rtMgr.Init(pDevice);
 	Inited = true;
 	//box.Init(rh->device);
 }
@@ -506,6 +507,8 @@ void miniDX9Render::RenderPixel(RenderInfo2& info)
 	vector<RenderInfo*> alphaDrawIndexs;
 	FilterAlphaObject(info, opaqueDrawIndexs, alphaDrawIndexs);
 
+
+
 	for (auto obj : opaqueDrawIndexs) {
 		Render(*obj);
 	}
@@ -513,6 +516,40 @@ void miniDX9Render::RenderPixel(RenderInfo2& info)
 	for (auto obj : alphaDrawIndexs) {
 		Render(*obj);
 	}
+}
+
+void miniDX9Render::RenderDeferred(RenderInfo2& info)
+{
+	vector<RenderInfo*> opaqueDrawIndexs;
+	vector<RenderInfo*> alphaDrawIndexs;
+	FilterAlphaObject(info, opaqueDrawIndexs, alphaDrawIndexs);
+
+	//set gbuffer
+	auto device = rh->device;
+	auto rt = rtMgr.GetRT("showTex");
+	auto rtdepth = rtMgr.GetRT("showTexDepth");
+
+
+	device->SetRenderTarget(0, rt->m_pSurface);
+	device->SetDepthStencilSurface(rtdepth->m_pSurface);
+	device->Clear(0, NULL, D3DCLEAR_TARGET|D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL, 0xFF000000 , 1.0f, 0);
+
+	// change shader
+	for (auto obj : opaqueDrawIndexs) {
+		Render(*obj);
+	}
+
+
+	//set final shader
+	for (auto obj : alphaDrawIndexs) {
+		Render(*obj);
+	}
+
+	LPDIRECT3DSURFACE9 pBackBuffer;
+	device->GetBackBuffer(0,0, D3DBACKBUFFER_TYPE_MONO, &pBackBuffer);
+	device->StretchRect(rt->m_pSurface, NULL, pBackBuffer, NULL, D3DTEXF_POINT);
+	device->SetRenderTarget(0, pBackBuffer);
+	//
 }
 
 void miniDX9Render::FilterAlphaObject(RenderInfo2& info, vector<RenderInfo*>& opaqueDrawIndexs, vector<RenderInfo*>& alphaDrawIndexs)
