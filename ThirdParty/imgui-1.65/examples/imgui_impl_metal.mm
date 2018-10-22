@@ -1,8 +1,10 @@
-// ImGui Renderer for: Metal
+// dear imgui: Renderer for Metal
 // This needs to be used along with a Platform Binding (e.g. OSX)
 
 // Implemented features:
 //  [X] Renderer: User texture binding. Use 'MTLTexture' as ImTextureID. Read the FAQ about ImTextureID in imgui.cpp.
+// Missing features:
+//  [ ] Renderer: Multi-viewport / platform windows.
 
 // You can copy and use unmodified imgui_impl_* files in your project. See main.cpp for an example of using this.
 // If you are new to dear imgui, read examples/README.txt and read the documentation at the top of imgui.cpp.
@@ -408,7 +410,7 @@ void ImGui_ImplMetal_DestroyDeviceObjects()
     [commandEncoder setDepthStencilState:g_sharedMetalContext.depthStencilState];
     
     // Setup viewport, orthographic projection matrix
-    // Our visible imgui space lies from draw_data->DisplayPps (top left) to
+    // Our visible imgui space lies from draw_data->DisplayPos (top left) to
     // draw_data->DisplayPos+data_data->DisplaySize (bottom right). DisplayMin is typically (0,0) for single viewport apps.
     MTLViewport viewport = 
     {   

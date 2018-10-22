@@ -11,6 +11,7 @@ map<void*, RenderBuffer> g_buffers;
 BufferMgr bufferMgr;
 App g_app;
 
+
 void ReadFileToString(string path, string& out)
 {
 	std::ifstream t(path);
@@ -423,7 +424,12 @@ void miniDX9Render::Init(LPDIRECT3DDEVICE9 pDevice)
 	bufferMgr.device = pDevice;
 	effectMgr.Init(pDevice);
 	rtMgr.Init(pDevice);
+	width = 800;
+	height = 600;
 	Inited = true;
+
+	//init effect 
+	fxaa.Init();
 	//box.Init(rh->device);
 }
 
@@ -532,7 +538,7 @@ void miniDX9Render::RenderDeferred(RenderInfo2& info)
 
 	device->SetRenderTarget(0, rt->m_pSurface);
 	device->SetDepthStencilSurface(rtdepth->m_pSurface);
-	device->Clear(0, NULL, D3DCLEAR_TARGET|D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL, 0xFF000000 , 1.0f, 0);
+	device->Clear(0, NULL, D3DCLEAR_TARGET|D3DCLEAR_ZBUFFER | D3DCLEAR_STENCIL, 0xFF888888 , 1.0f, 0);
 
 	// change shader
 	for (auto obj : opaqueDrawIndexs) {
@@ -544,11 +550,11 @@ void miniDX9Render::RenderDeferred(RenderInfo2& info)
 	for (auto obj : alphaDrawIndexs) {
 		Render(*obj);
 	}
-
-	LPDIRECT3DSURFACE9 pBackBuffer;
-	device->GetBackBuffer(0,0, D3DBACKBUFFER_TYPE_MONO, &pBackBuffer);
-	device->StretchRect(rt->m_pSurface, NULL, pBackBuffer, NULL, D3DTEXF_POINT);
-	device->SetRenderTarget(0, pBackBuffer);
+	fxaa.inputTexture = rt->m_pTexture;
+	fxaa.Render();
+	rh->ShowTexture(fxaa.OutRT->m_pSurface);
+	//rh->ShowTexture(rt->m_pSurface);
+	//device->SetRenderTarget(0, pBackBuffer);
 	//
 }
 
@@ -562,4 +568,57 @@ void miniDX9Render::FilterAlphaObject(RenderInfo2& info, vector<RenderInfo*>& op
 			opaqueDrawIndexs.push_back(&info.objInfoList[i]);
 		}
 	}
+}
+
+void FXAAEffect::Init()
+{
+	
+	m_pEffect =g_miniRender.effectMgr.CreateEffectFromFile("shader/fxaa.shader", "fxaa");
+	int width = g_miniRender.width;
+	int height = g_miniRender.height;
+	
+	m_PixelSize[0] = 1.0f / width;
+	m_PixelSize[1] = 1.0f / height;
+
+	m_hTech = m_pEffect->GetTechniqueByName("Fxaa");
+	m_hTexSource = m_pEffect->GetParameterByName(NULL, "tex_source");
+	m_hPixelSize = m_pEffect->GetParameterByName(NULL, "pixelSize");
+	OutRT =g_miniRender.rtMgr.CreateRT("fxaaRT", width, height, D3DFMT_A8R8G8B8);
+
+	//add check
+}
+
+void FXAAEffect::Render()
+{
+	if (!inputTexture) return;
+	auto device = g_rh.device;
+	//pDevice->GetTexture(0, &m_pOldTex);
+	m_pEffect->SetTechnique(m_hTech);
+	m_pEffect->SetTexture(m_hTexSource, inputTexture);
+	m_pEffect->SetFloatArray(m_hPixelSize, m_PixelSize, 2);
+
+	BlendState bs;
+	bs.AlphaBlendEnable = FALSE;
+	bs.AlphaTestEnable = FALSE;
+	DepthStencilState ds;
+	ds.ZTestEnable = FALSE;
+	ds.ZWrite = FALSE;
+
+	g_rh.SetBlendState(bs);
+	g_rh.SetDepthStencilState(ds);
+
+	device->SetFVF(D3DFVF_XYZW | D3DFVF_TEX1);
+	device->SetRenderTarget(0, OutRT->m_pSurface);
+	UINT uPasses;
+	m_pEffect->Begin(&uPasses, 0);
+	m_pEffect->BeginPass(0);
+	//device->SetRenderState()
+	m_pEffect->CommitChanges();
+	device->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, g_miniRender.globalValue.ScreenBuffer, 6 * sizeof(float));
+	m_pEffect->EndPass();
+	m_pEffect->End();
+
+	//pDevice->SetTexture(0, m_pOldTex);
+
+	//SAFE_RELEASE(m_pOldTex);
 }

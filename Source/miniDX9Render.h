@@ -141,11 +141,11 @@ struct EffectMgr {
 		device = d;
 
 		CreateEffectFromFile("shader/skin_animation2.fxo", "skinAnimation2");
-		CreateEffectFromFile("shader/fxaa.shader", "fxaa");
-
+		
+		
 	}
 
-	void CreateEffectFromFile(string path,string name) {
+	ID3DXEffect* CreateEffectFromFile(string path,string name) {
 		std::ifstream file(path, std::ios::binary | std::ios::ate);
 		if (file) {
 			std::streamsize size = file.tellg();
@@ -155,9 +155,11 @@ struct EffectMgr {
 			if (file.read(buffer.data(), size))
 			{
 				bool r = CreateEffectFromSrc(&buffer[0], buffer.size(), name);
-				cout << "create effect "+path+":"<< name<< r << endl;
+				cout << "create effect "+path+":"<< name+ " : "<< r << endl;
+				if (r) return GetEffect(name);
 			}
 		}
+		return NULL;
 	}
 
 	bool CreateEffectFromSrc(const void* shaderSrc,UINT length,string name) {
@@ -227,15 +229,6 @@ struct RenderTarget
 
 };
 
-class FXAAEffect {
-	void Init() {
-
-	}
-	void Render() {
-
-	}
-};
-
 struct RenderTargetMgr
 {
 	IDirect3DDevice9* device = NULL;
@@ -244,7 +237,7 @@ struct RenderTargetMgr
 		uint w = 800, h = 600;
 		CreateRT("showTex", w, h, D3DFMT_A8R8G8B8);
 		CreateDepthRT("showTexDepth", w, h, D3DFMT_D24S8);
-		CreateRT("fxaaRT", w, h, D3DFMT_A8R8G8B8);
+		
 		
 
 		//gbuffer
@@ -490,6 +483,12 @@ public:
 	void SetMaterial(D3DMATERIAL9* mat) {
 		device->SetMaterial(mat);
 	}
+
+	void ShowTexture(IDirect3DSurface9* surface, D3DTEXTUREFILTERTYPE filter= D3DTEXF_POINT) {
+		LPDIRECT3DSURFACE9 pBackBuffer;
+		device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &pBackBuffer);
+		device->StretchRect(surface, NULL, pBackBuffer, NULL, filter);
+	}
 };
 
 class Pipeline {
@@ -498,10 +497,28 @@ public:
 	virtual void Render(){}
 };
 
+class FXAAEffect {
+public:
+	void Init();
+	void Render();
+
+	//
+	LPDIRECT3DTEXTURE9 inputTexture=NULL;
+	RenderTarget* OutRT;
+
+
+	float			 m_PixelSize[2];
+	D3DXHANDLE		 m_hTech;
+	D3DXHANDLE		 m_hTexSource;
+	D3DXHANDLE		 m_hPixelSize;
+	ID3DXEffect* m_pEffect;
+};
+
+
 struct GlobalValue {
 	float ScreenBuffer[24];
 
-	void Init() {
+	GlobalValue() {
 		ScreenBuffer[0] = -1.0f ; ScreenBuffer[1] = -1.0f ; ScreenBuffer[2] = 0.0f; ScreenBuffer[3] = 1.0f; ScreenBuffer[4] = 0.0f; ScreenBuffer[5] = 1.0f;
 		ScreenBuffer[6] = -1.0f ; ScreenBuffer[7] = 1.0f ; ScreenBuffer[8] = 0.0f; ScreenBuffer[9] = 1.0f; ScreenBuffer[10] = 0.0f; ScreenBuffer[11] = 0.0f;
 		ScreenBuffer[12] = 1.0f ; ScreenBuffer[13] = -1.0f ; ScreenBuffer[14] = 0.0f; ScreenBuffer[15] = 1.0f; ScreenBuffer[16] = 1.0f; ScreenBuffer[17] = 1.0f;
@@ -524,6 +541,7 @@ public:
 	void FilterAlphaObject(RenderInfo2& info, vector<RenderInfo*>& opaqueDrawIndexs, vector<RenderInfo*>& alphaDrawIndexs);
 
 	void Render(RenderInfo& info);
+
 
 	void SetTextures(TextureList& list) {
 		for(int i=0;i<8;i++)
@@ -555,10 +573,16 @@ public:
 	void OnDeviceReset(){}
 
 	bool Inited = false;
+	UINT width, height;
 	EffectMgr effectMgr;
 	DX9RenderHardware* rh=NULL;
 	RenderTargetMgr rtMgr;
+	GlobalValue globalValue;
+	FXAAEffect fxaa;
 };
+
+
+
 
 //file util
 

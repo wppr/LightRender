@@ -1,5 +1,5 @@
-// ImGui - standalone example application for Allegro 5
-// If you are new to ImGui, see examples/README.txt and documentation at the top of imgui.cpp.
+// dear imgui: standalone example application for Allegro 5
+// If you are new to dear imgui, see examples/README.txt and documentation at the top of imgui.cpp.
 
 #include <stdint.h>
 #include <allegro5/allegro.h>
@@ -26,7 +26,9 @@ int main(int, char**)
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
-    //io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;  // Enable Keyboard Controls
+    //io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;           // Enable Docking
+
     ImGui_ImplAllegro5_Init(display);
 
     // Setup style
