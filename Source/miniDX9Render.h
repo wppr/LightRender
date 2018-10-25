@@ -132,7 +132,7 @@ struct DrawParam {
 	}
 };
 
-void ReadFileToString(string path, string& out);
+
 
 struct EffectMgr {
 	map<string, ID3DXEffect*> EffectMap;
@@ -214,15 +214,15 @@ struct ShaderState {
 	string technique;
 	int pass=0;
 
-	map<string, LPDIRTEX> texMap;
+	map<string, IDirect3DTexture9*> texMap;
 	map<string, float> varMap;
 	map<string, D3DCOLORVALUE> colorMap;
 };
 
 struct RenderTarget
 {
-	uint				m_Width;
-	uint				m_Height;
+	uint32_t				m_Width;
+	uint32_t				m_Height;
 	D3DFORMAT			m_Format;
 	LPDIRECT3DTEXTURE9  m_pTexture=NULL;
 	LPDIRECT3DSURFACE9	m_pSurface=NULL;
@@ -234,29 +234,29 @@ struct RenderTargetMgr
 	IDirect3DDevice9* device = NULL;
 	void Init(IDirect3DDevice9* pdevice) {
 		device = pdevice;
-		uint w = 800, h = 600;
+		uint32_t w = 1280, h = 800;
 		CreateRT("showTex", w, h, D3DFMT_A8R8G8B8);
 		CreateDepthRT("showTexDepth", w, h, D3DFMT_D24S8);
 		
 		
 
 		//gbuffer
-		CreateRT("g_diffuse", w, h, D3DFMT_A8R8G8B8);
-		CreateRT("g_normal", w, h, D3DFMT_A8R8G8B8);
-		CreateRT("g_customInfo", w, h, D3DFMT_A8R8G8B8);
-		CreateRT("g_depth", w, h, D3DFMT_R32F);
+		//CreateRT("g_diffuse", w, h, D3DFMT_A8R8G8B8);
+		//CreateRT("g_normal", w, h, D3DFMT_A8R8G8B8);
+		//CreateRT("g_customInfo", w, h, D3DFMT_A8R8G8B8);
+		//CreateRT("g_depth", w, h, D3DFMT_R32F);
 
 
 		
 	}
 
-	RenderTarget* CreateRT(string name, uint width, uint height, D3DFORMAT format) {
+	RenderTarget* CreateRT(string name, uint32_t width, uint32_t height, D3DFORMAT format) {
 		return CreateRTImp(name, width, height, format, D3DUSAGE_RENDERTARGET);
 	}
-	RenderTarget* CreateDepthRT(string name, uint width, uint height, D3DFORMAT format) {
+	RenderTarget* CreateDepthRT(string name, uint32_t width, uint32_t height, D3DFORMAT format) {
 		return CreateRTImp(name, width, height, format, D3DUSAGE_DEPTHSTENCIL);
 	}
-	RenderTarget* CreateRTImp(string name, uint width, uint height, D3DFORMAT format,DWORD Usage) {
+	RenderTarget* CreateRTImp(string name, uint32_t width, uint32_t height, D3DFORMAT format,DWORD Usage) {
 		RenderTarget rt;
 
 		rt.m_Width = width;
@@ -298,8 +298,8 @@ struct RenderTargetState {
 struct RenderInfo {
 	D3DXMATRIX WorldMatrix;
 	
-	LPVERBUF VertexBuffer;
-	LPINDBUF IndexBuffer;
+	LPDIRECT3DVERTEXBUFFER9 VertexBuffer;
+	LPDIRECT3DINDEXBUFFER9 IndexBuffer;
 	CombiendRenderState renderState;
 	DrawParam drawParam;
 	ShaderState shaderState;
@@ -400,6 +400,7 @@ struct RenderInfoFixed {
 
 struct RenderConfig {
 
+	int pipelineType = 1;
 	bool IsDeferredShadingEnable=false;
 	bool IsLinearLight=false;
 	bool IsFXAAEnable=false;
@@ -407,10 +408,10 @@ struct RenderConfig {
 };
 
 struct RenderBuffer {
-	LPVERBUF vb;
-	LPINDBUF ib;
+	IDirect3DVertexBuffer9 * vb;
+	IDirect3DIndexBuffer9 * ib;
 };
-class BufferMgr {
+class RenderBufferMgr {
 public:
 	map<void*, RenderBuffer> PieceTobuffers;
 	IDirect3DDevice9* device;
@@ -489,6 +490,12 @@ public:
 		device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &pBackBuffer);
 		device->StretchRect(surface, NULL, pBackBuffer, NULL, filter);
 	}
+
+	void ResetDefaultRT() {
+		LPDIRECT3DSURFACE9 pBackBuffer;
+		device->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &pBackBuffer);
+		device->SetRenderTarget(0, pBackBuffer);
+	}
 };
 
 class Pipeline {
@@ -517,12 +524,16 @@ public:
 
 struct GlobalValue {
 	float ScreenBuffer[24];
-
+	float w = 1280;
+	float h = 800;
 	GlobalValue() {
-		ScreenBuffer[0] = -1.0f ; ScreenBuffer[1] = -1.0f ; ScreenBuffer[2] = 0.0f; ScreenBuffer[3] = 1.0f; ScreenBuffer[4] = 0.0f; ScreenBuffer[5] = 1.0f;
-		ScreenBuffer[6] = -1.0f ; ScreenBuffer[7] = 1.0f ; ScreenBuffer[8] = 0.0f; ScreenBuffer[9] = 1.0f; ScreenBuffer[10] = 0.0f; ScreenBuffer[11] = 0.0f;
-		ScreenBuffer[12] = 1.0f ; ScreenBuffer[13] = -1.0f ; ScreenBuffer[14] = 0.0f; ScreenBuffer[15] = 1.0f; ScreenBuffer[16] = 1.0f; ScreenBuffer[17] = 1.0f;
-		ScreenBuffer[18] = 1.0f ; ScreenBuffer[19] = 1.0f ; ScreenBuffer[20] = 0.0f; ScreenBuffer[21] = 1.0f; ScreenBuffer[22] = 1.0f; ScreenBuffer[23] = 0.0f;
+		float offU, offV;
+		offU = 0;
+		offV = 0;
+		ScreenBuffer[0] = -1.0f -offU; ScreenBuffer[1] = -1.0f + offV; ScreenBuffer[2] = 0.0f; ScreenBuffer[3] = 1.0f; ScreenBuffer[4] = 0.0f; ScreenBuffer[5] = 1.0f;
+		ScreenBuffer[6] = -1.0f - offU; ScreenBuffer[7] = 1.0f + offV; ScreenBuffer[8] = 0.0f; ScreenBuffer[9] = 1.0f; ScreenBuffer[10] = 0.0f; ScreenBuffer[11] = 0.0f;
+		ScreenBuffer[12] = 1.0f - offU; ScreenBuffer[13] = -1.0f + offV; ScreenBuffer[14] = 0.0f; ScreenBuffer[15] = 1.0f; ScreenBuffer[16] = 1.0f; ScreenBuffer[17] = 1.0f;
+		ScreenBuffer[18] = 1.0f - offU; ScreenBuffer[19] = 1.0f + offV; ScreenBuffer[20] = 0.0f; ScreenBuffer[21] = 1.0f; ScreenBuffer[22] = 1.0f; ScreenBuffer[23] = 0.0f;
 	}
 };
 
@@ -537,6 +548,8 @@ public:
 	void RenderPixel(RenderInfo2& info);
 
 	void RenderDeferred(RenderInfo2& info);
+
+	void RenderWithConfig(RenderInfo2& info);
 
 	void FilterAlphaObject(RenderInfo2& info, vector<RenderInfo*>& opaqueDrawIndexs, vector<RenderInfo*>& alphaDrawIndexs);
 
@@ -573,12 +586,14 @@ public:
 	void OnDeviceReset(){}
 
 	bool Inited = false;
+	RenderConfig config;
 	UINT width, height;
 	EffectMgr effectMgr;
 	DX9RenderHardware* rh=NULL;
 	RenderTargetMgr rtMgr;
 	GlobalValue globalValue;
 	FXAAEffect fxaa;
+	
 };
 
 
@@ -588,34 +603,20 @@ public:
 
 
 
-class App {
-public:
-	string WorkDirectory="F:/artist/data/";
-
-};
 
 
 
-
-
-
-
-
-
-
-void ReadConfig();
-
-//ModelToRender helper Func
-#include "EditModel.h"
 extern miniDX9Render g_miniRender;
 extern DX9RenderHardware g_rh;
-extern map<void*, RenderBuffer> g_buffers;
-extern BufferMgr bufferMgr;
-extern App g_app;
-void SetGlobalSkinShaderParam(IDirect3DDevice9* m_pDevice, ID3DXEffect* m_pSkinEffect);
 
-void EditModelToRenderInfo(CEditModel* model, RenderInfo2& infoList);
+extern RenderBufferMgr g_bufferMgr;
 
-void PieceToRenderInfo(CPiece* piece, RenderInfo& info, CRenderMatrix& ModelMatrix, bool CalCloth, CRenderPiece* pRP);
+
+
+
+
+
+
+
 
 
